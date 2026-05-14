@@ -4,7 +4,8 @@ Licensed under the MIT License.
 -->
 
 <launch>
-  <arg name="tf_prefix"         default="" />                       <!-- Prefix added to tf frame IDs. It typically contains a trailing '_' unless empty. -->
+  <arg name="use_rviz"                    default="true"/>
+  <arg name="tf_prefix"                   default="" />             <!-- Prefix added to tf frame IDs. It typically contains a trailing '_' unless empty. -->
   <arg name="overwrite_robot_description" default="true" />         <!-- Flag to publish a standalone azure_description instead of the default robot_descrition parameter-->
 
   <group if="$(arg overwrite_robot_description)">
@@ -30,11 +31,11 @@ Licensed under the MIT License.
   <arg name="depth_unit"              default="16UC1" />          <!-- Depth distance units. Options are: "32FC1" (32 bit float metre) or "16UC1" (16 bit integer millimetre) -->
   <arg name="color_enabled"           default="true" />           <!-- Enable or disable the color camera -->
   <arg name="color_format"            default="bgra" />           <!-- The format of RGB camera. Valid options: bgra, jpeg -->
-  <arg name="color_resolution"        default="1536P" />          <!-- Resolution at which to run the color camera. Valid options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P -->
-  <arg name="fps"                     default="5" />              <!-- FPS to run both cameras at. Valid options are 5, 15, and 30 -->
+  <arg name="color_resolution"        default="1080P" />          <!-- Resolution at which to run the color camera. Valid options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P -->
+  <arg name="fps"                     default="15" />              <!-- FPS to run both cameras at. Valid options are 5, 15, and 30 -->
   <arg name="point_cloud"             default="true" />           <!-- Generate a point cloud from depth data. Requires depth_enabled -->
   <arg name="rgb_point_cloud"         default="true" />           <!-- Colorize the point cloud using the RBG camera. Requires color_enabled and depth_enabled -->
-  <arg name="point_cloud_in_depth_frame" default="false" />        <!-- Whether the RGB pointcloud is rendered in the depth frame (true) or RGB frame (false). Will either match the resolution of the depth camera (true) or the RGB camera (false). -->
+  <arg name="point_cloud_in_depth_frame" default="true" />         <!-- Whether the RGB pointcloud is rendered in the depth frame (true) or RGB frame (false). Will either match the resolution of the depth camera (true) or the RGB camera (false). -->
   <arg name="required"                default="false" />          <!-- Argument which specified if the entire launch file should terminate if the node dies -->
   <arg name="sensor_sn"               default="" />               <!-- Sensor serial number. If none provided, the first sensor will be selected -->
   <arg name="recording_file"          default="" />               <!-- Absolute path to a mkv recording file which will be used with the playback api instead of opening a device -->
@@ -46,6 +47,18 @@ Licensed under the MIT License.
   <arg name="imu_rate_target" default="0"/>                       <!-- Desired output rate of IMU messages. Set to 0 (default) for full rate (1.6 kHz). --> 
   <arg name="wired_sync_mode" default="0"/>                       <!-- Wired sync mode. 0: OFF, 1: MASTER, 2: SUBORDINATE. --> 
   <arg name="subordinate_delay_off_master_usec" default="0"/>     <!-- Delay subordinate camera off master camera by specified amount in usec. --> 
+
+  <!-- Topic remap targets (legacy pipeline compatibility) -->
+  <arg name="rgb_topic" default="/camera/rgb/image_raw"/>
+  <arg name="rgb_camera_info_topic" default="/camera/rgb/camera_info"/>
+  <arg name="aligned_depth_topic" default="/sierra/depth/image_raw"/>
+  <arg name="aligned_depth_camera_info_topic" default="/sierra/depth/camera_info"/>
+  <arg name="point_cloud_topic" default="/sierra/point_cloud"/>
+
+  <!-- TF alias (legacy frame compatibility for ros_humanpose) -->
+  <arg name="publish_legacy_frame_aliases" default="true"/>
+  <arg name="legacy_rgb_frame" default="camera_rgb_frame"/>
+  <arg name="legacy_depth_frame" default="camera_depth_frame"/>
 
   <node pkg="azure_kinect_ros_driver" type="node" name="azure_kinect_ros_driver" output="screen" required="$(arg required)">
     <param name="depth_enabled"     type="bool"   value="$(arg depth_enabled)" />
@@ -69,5 +82,24 @@ Licensed under the MIT License.
     <param name="imu_rate_target" type="int" value="$(arg imu_rate_target)"/>
     <param name="wired_sync_mode" type="int" value="$(arg wired_sync_mode)"/>
     <param name="subordinate_delay_off_master_usec" type="int" value="$(arg subordinate_delay_off_master_usec)"/>
+
+    <remap from="rgb/image_raw" to="$(arg rgb_topic)"/>
+    <remap from="rgb/camera_info" to="$(arg rgb_camera_info_topic)"/>
+    <remap from="depth_to_rgb/image_raw" to="$(arg aligned_depth_topic)"/>
+    <remap from="depth_to_rgb/camera_info" to="$(arg aligned_depth_camera_info_topic)"/>
+    <remap from="points2" to="$(arg point_cloud_topic)"/>
   </node>
+  <group if="$(arg use_rviz)">
+    <node pkg="rviz" name="rviz" type="rviz" output="screen"
+      launch-prefix="bash -c '$0 $@' "
+      args="-d $(find azure_kinect_ros_driver)/rviz/config.rviz"/>
+  </group>
+
+  <group if="$(arg publish_legacy_frame_aliases)">
+    <node pkg="tf2_ros" type="static_transform_publisher" name="legacy_depth_frame_alias"
+      args="0 0 0 0 0 0 1 $(arg tf_prefix)depth_camera_link $(arg legacy_depth_frame)" />
+    <node pkg="tf2_ros" type="static_transform_publisher" name="legacy_rgb_frame_alias"
+      args="0 0 0 0 0 0 1 $(arg tf_prefix)rgb_camera_link $(arg legacy_rgb_frame)" />
+  </group>
+
 </launch>
