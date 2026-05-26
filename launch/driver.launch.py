@@ -6,188 +6,264 @@ import xacro
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription, conditions
-from launch.actions import (DeclareLaunchArgument, GroupAction)
-from launch.substitutions import LaunchConfiguration, Command
+from launch.actions import DeclareLaunchArgument, GroupAction
+from launch.substitutions import LaunchConfiguration
 
 import launch.actions
 import launch_ros.actions
 
 def to_urdf(xacro_path, urdf_path=None):
-    """Convert the given xacro file to URDF file.
-    * xacro_path -- the path to the xacro file
-    * urdf_path -- the path to the urdf file
-    """
-    # If no URDF path is given, use a temporary file
     if urdf_path is None:
         urdf_path = os.path.join(
             get_package_share_directory("azure_kinect_ros_driver"),
             "urdf",
             "azure_kinect.urdf")
-    # open and process file
     doc = xacro.process_file(xacro_path)
-    # open the output file
     out = xacro.open_output(urdf_path)
     out.write(doc.toprettyxml(indent='  '))
-
-    return urdf_path  # Return path to the urdf file
+    return urdf_path
 
 def generate_launch_description():
-    # Note: tf_prefix is not supported as an argument to the xacro file for robot/joint state publishers
-    # Convert xacro to urdf for robot_state_publisher and joint_state_publisher
     xacro_file = os.path.join(
             get_package_share_directory("azure_kinect_ros_driver"),
             "urdf",
             "azure_kinect.urdf.xacro")
-    print("Robot description xacro_file : {}".format(xacro_file))
 
-    urdf_path = to_urdf(xacro_file) # convert, xacro to urdf
+    urdf_path = to_urdf(xacro_file)
     urdf = open(urdf_path).read()
-    print("Robot description urdf_path : {}".format(urdf_path))
 
-    # Variable used for the flag to publish a standalone azure_description instead of the default robot_description parameter
-    remappings = [('robot_description', 'azure_description')]
+    azure_description_remappings = [('robot_description', 'azure_description')]
+
+    rviz_config = os.path.join(
+        get_package_share_directory('azure_kinect_ros_driver'),
+        'rviz',
+        'azure_kinect.rviz')
 
     return LaunchDescription([
+    # ── General ────────────────────────────────────────────────────────────
+    DeclareLaunchArgument(
+        'use_rviz',
+        default_value='true',
+        description='Launch rviz2 with the default config'),
+    DeclareLaunchArgument(
+        'tf_prefix',
+        default_value='',
+        description='Prefix added to TF frame IDs. Typically contains a trailing _ unless empty.'),
     DeclareLaunchArgument(
         'overwrite_robot_description',
-        default_value="true" ,
-        description="Flag to publish a standalone azure_description instead of the default robot_description parameter."),
-    ##############################################
+        default_value='true',
+        description='Publish a standalone azure_description instead of robot_description'),
+    # ── Camera parameters ──────────────────────────────────────────────────
     DeclareLaunchArgument(
         'depth_enabled',
-        default_value="true",
-        description="Enable or disable the depth camera"),
+        default_value='true',
+        description='Enable or disable the depth camera'),
     DeclareLaunchArgument(
         'depth_mode',
-        default_value="WFOV_UNBINNED",
-        description="Set the depth camera mode, which affects FOV, depth range, and camera resolution. See Azure Kinect documentation for full details. Valid options: NFOV_UNBINNED, NFOV_2X2BINNED, WFOV_UNBINNED, WFOV_2X2BINNED, and PASSIVE_IR"),
+        default_value='WFOV_UNBINNED',
+        description='Depth camera mode: NFOV_UNBINNED, NFOV_2X2BINNED, WFOV_UNBINNED, WFOV_2X2BINNED, PASSIVE_IR'),
     DeclareLaunchArgument(
         'depth_unit',
-        default_value="16UC1",
-        description='Depth distance units. Options are: "32FC1" (32 bit float metre) or "16UC1" (16 bit integer millimetre)'),
+        default_value='16UC1',
+        description='Depth distance units: "32FC1" (float metre) or "16UC1" (integer millimetre)'),
     DeclareLaunchArgument(
         'color_enabled',
-        default_value="true",
-        description="Enable or disable the color camera"),
+        default_value='true',
+        description='Enable or disable the color camera'),
     DeclareLaunchArgument(
         'color_format',
-        default_value="bgra",
-        description="The format of RGB camera. Valid options: bgra, jpeg"),
+        default_value='bgra',
+        description='RGB camera format: bgra, jpeg'),
     DeclareLaunchArgument(
         'color_resolution',
-        default_value="1536P",
-        description="Resolution at which to run the color camera. Valid options: 720P, 1080P, 1440P, 1536P, 2160P, 3072P"),
+        default_value='1080P',
+        description='Color camera resolution: 720P, 1080P, 1440P, 1536P, 2160P, 3072P'),
     DeclareLaunchArgument(
         'fps',
-        default_value="5",
-        description="FPS to run both cameras at. Valid options are 5, 15, and 30"),
+        default_value='15',
+        description='Camera FPS: 5, 15, or 30'),
     DeclareLaunchArgument(
         'point_cloud',
-        default_value="true",
-        description="Generate a point cloud from depth data. Requires depth_enabled"),
+        default_value='true',
+        description='Generate a point cloud from depth data. Requires depth_enabled'),
     DeclareLaunchArgument(
         'rgb_point_cloud',
-        default_value="true",
-        description="Colorize the point cloud using the RBG camera. Requires color_enabled and depth_enabled"),
+        default_value='true',
+        description='Colorize the point cloud using the RGB camera. Requires color_enabled and depth_enabled'),
     DeclareLaunchArgument(
         'point_cloud_in_depth_frame',
-        default_value="false",
-        description="Whether the RGB pointcloud is rendered in the depth frame (true) or RGB frame (false). Will either match the resolution of the depth camera (true) or the RGB camera (false)."),
-    DeclareLaunchArgument( # Not a parameter of the node, rather a launch file parameter
+        default_value='true',
+        description='Render RGB point cloud in depth frame (true) or RGB frame (false)'),
+    DeclareLaunchArgument(
         'required',
-        default_value="false",
-        description="Argument which specified if the entire launch file should terminate if the node dies"),
+        default_value='false',
+        description='Terminate the launch file if the driver node dies'),
     DeclareLaunchArgument(
         'sensor_sn',
-        default_value="",
-        description="Sensor serial number. If none provided, the first sensor will be selected"),
+        default_value='',
+        description='Sensor serial number. If empty, the first detected sensor is used'),
     DeclareLaunchArgument(
         'recording_file',
-        default_value="",
-        description="Absolute path to a mkv recording file which will be used with the playback api instead of opening a device"),
+        default_value='',
+        description='Absolute path to a .mkv recording for playback instead of live device'),
     DeclareLaunchArgument(
         'recording_loop_enabled',
-        default_value="false",
-        description="If set to true the recording file will rewind the beginning once end of file is reached"),
+        default_value='false',
+        description='Loop the recording file from the beginning when it ends'),
     DeclareLaunchArgument(
         'body_tracking_enabled',
-        default_value="false",
-        description="If set to true the joint positions will be published as marker arrays"),
+        default_value='false',
+        description='Publish joint positions as marker arrays'),
     DeclareLaunchArgument(
         'body_tracking_smoothing_factor',
-        default_value="0.0",
-        description="Set between 0 for no smoothing and 1 for full smoothing"),
+        default_value='0.0',
+        description='Body tracking smoothing: 0 (none) to 1 (full)'),
     DeclareLaunchArgument(
         'rescale_ir_to_mono8',
-        default_value="false",
-        description="Whether to rescale the IR image to an 8-bit monochrome image for visualization and further processing. A scaling factor (ir_mono8_scaling_factor) is applied."),
+        default_value='false',
+        description='Rescale IR image to 8-bit monochrome using ir_mono8_scaling_factor'),
     DeclareLaunchArgument(
         'ir_mono8_scaling_factor',
-        default_value="1.0",
-        description="Scaling factor to apply when converting IR to mono8 (see rescale_ir_to_mono8). If using illumination, use the value 0.5-1. If using passive IR, use 10."),
+        default_value='1.0',
+        description='Scaling factor for IR to mono8 conversion. Use 0.5-1 for illumination, 10 for passive IR'),
     DeclareLaunchArgument(
         'imu_rate_target',
-        default_value="0",
-        description="Desired output rate of IMU messages. Set to 0 (default) for full rate (1.6 kHz)."),
+        default_value='0',
+        description='Target IMU output rate in Hz. 0 = full rate (1.6 kHz)'),
     DeclareLaunchArgument(
         'wired_sync_mode',
-        default_value="0",
-        description="Wired sync mode. 0: OFF, 1: MASTER, 2: SUBORDINATE."),
+        default_value='0',
+        description='Wired sync mode: 0=OFF, 1=MASTER, 2=SUBORDINATE'),
     DeclareLaunchArgument(
         'subordinate_delay_off_master_usec',
-        default_value="0",
-        description="Delay subordinate camera off master camera by specified amount in usec."),
+        default_value='0',
+        description='Delay subordinate camera off master in microseconds'),
+    # ── Topic remap targets ────────────────────────────────────────────────
+    DeclareLaunchArgument(
+        'rgb_topic',
+        default_value='/camera/rgb/image_raw',
+        description='Remap target for rgb/image_raw'),
+    DeclareLaunchArgument(
+        'rgb_camera_info_topic',
+        default_value='/camera/rgb/camera_info',
+        description='Remap target for rgb/camera_info'),
+    DeclareLaunchArgument(
+        'aligned_depth_topic',
+        default_value='/sierra/depth/image_raw',
+        description='Remap target for depth_to_rgb/image_raw'),
+    DeclareLaunchArgument(
+        'aligned_depth_camera_info_topic',
+        default_value='/sierra/depth/camera_info',
+        description='Remap target for depth_to_rgb/camera_info'),
+    DeclareLaunchArgument(
+        'point_cloud_topic',
+        default_value='/sierra/point_cloud',
+        description='Remap target for points2'),
+    # ── Legacy frame alias args ────────────────────────────────────────────
+    DeclareLaunchArgument(
+        'publish_legacy_frame_aliases',
+        default_value='true',
+        description='Publish static TF aliases for legacy frame names'),
+    DeclareLaunchArgument(
+        'legacy_rgb_frame',
+        default_value='camera_rgb_frame',
+        description='Legacy frame name aliased to rgb_camera_link'),
+    DeclareLaunchArgument(
+        'legacy_depth_frame',
+        default_value='camera_depth_frame',
+        description='Legacy frame name aliased to depth_camera_link'),
+    # ── Driver node ────────────────────────────────────────────────────────
     launch_ros.actions.Node(
         package='azure_kinect_ros_driver',
         executable='node',
         output='screen',
         parameters=[
-            {'depth_enabled': launch.substitutions.LaunchConfiguration('depth_enabled')},
-            {'depth_mode': launch.substitutions.LaunchConfiguration('depth_mode')},
-            {'depth_unit': launch.substitutions.LaunchConfiguration('depth_unit')},
-            {'color_enabled': launch.substitutions.LaunchConfiguration('color_enabled')},
-            {'color_format': launch.substitutions.LaunchConfiguration('color_format')},
-            {'color_resolution': launch.substitutions.LaunchConfiguration('color_resolution')},
-            {'fps': launch.substitutions.LaunchConfiguration('fps')},
-            {'point_cloud': launch.substitutions.LaunchConfiguration('point_cloud')},
-            {'rgb_point_cloud': launch.substitutions.LaunchConfiguration('rgb_point_cloud')},
-            {'point_cloud_in_depth_frame': launch.substitutions.LaunchConfiguration('point_cloud_in_depth_frame')},
-            {'sensor_sn': launch.substitutions.LaunchConfiguration('sensor_sn')},
-            {'recording_file': launch.substitutions.LaunchConfiguration('recording_file')},
-            {'recording_loop_enabled': launch.substitutions.LaunchConfiguration('recording_loop_enabled')},
-            {'body_tracking_enabled': launch.substitutions.LaunchConfiguration('body_tracking_enabled')},
-            {'body_tracking_smoothing_factor': launch.substitutions.LaunchConfiguration('body_tracking_smoothing_factor')},
-            {'rescale_ir_to_mono8': launch.substitutions.LaunchConfiguration('rescale_ir_to_mono8')},
-            {'ir_mono8_scaling_factor': launch.substitutions.LaunchConfiguration('ir_mono8_scaling_factor')},
-            {'imu_rate_target': launch.substitutions.LaunchConfiguration('imu_rate_target')},
-            {'wired_sync_mode': launch.substitutions.LaunchConfiguration('wired_sync_mode')},
-            {'subordinate_delay_off_master_usec': launch.substitutions.LaunchConfiguration('subordinate_delay_off_master_usec')}]),
-    # If flag overwrite_robot_description is set:
+            {'depth_enabled':                       LaunchConfiguration('depth_enabled')},
+            {'depth_mode':                          LaunchConfiguration('depth_mode')},
+            {'depth_unit':                          LaunchConfiguration('depth_unit')},
+            {'color_enabled':                       LaunchConfiguration('color_enabled')},
+            {'color_format':                        LaunchConfiguration('color_format')},
+            {'color_resolution':                    LaunchConfiguration('color_resolution')},
+            {'fps':                                 LaunchConfiguration('fps')},
+            {'point_cloud':                         LaunchConfiguration('point_cloud')},
+            {'rgb_point_cloud':                     LaunchConfiguration('rgb_point_cloud')},
+            {'point_cloud_in_depth_frame':          LaunchConfiguration('point_cloud_in_depth_frame')},
+            {'sensor_sn':                           LaunchConfiguration('sensor_sn')},
+            {'tf_prefix':                           LaunchConfiguration('tf_prefix')},
+            {'recording_file':                      LaunchConfiguration('recording_file')},
+            {'recording_loop_enabled':              LaunchConfiguration('recording_loop_enabled')},
+            {'body_tracking_enabled':               LaunchConfiguration('body_tracking_enabled')},
+            {'body_tracking_smoothing_factor':      LaunchConfiguration('body_tracking_smoothing_factor')},
+            {'rescale_ir_to_mono8':                 LaunchConfiguration('rescale_ir_to_mono8')},
+            {'ir_mono8_scaling_factor':             LaunchConfiguration('ir_mono8_scaling_factor')},
+            {'imu_rate_target':                     LaunchConfiguration('imu_rate_target')},
+            {'wired_sync_mode':                     LaunchConfiguration('wired_sync_mode')},
+            {'subordinate_delay_off_master_usec':   LaunchConfiguration('subordinate_delay_off_master_usec')},
+        ],
+        remappings=[
+            ('rgb/image_raw',           LaunchConfiguration('rgb_topic')),
+            ('rgb/camera_info',         LaunchConfiguration('rgb_camera_info_topic')),
+            ('depth_to_rgb/image_raw',  LaunchConfiguration('aligned_depth_topic')),
+            ('depth_to_rgb/camera_info',LaunchConfiguration('aligned_depth_camera_info_topic')),
+            ('points2',                 LaunchConfiguration('point_cloud_topic')),
+        ]),
+    # ── Robot description (overwrite_robot_description=true) ───────────────
     launch_ros.actions.Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
         name='robot_state_publisher',
-        parameters = [{'robot_description' : urdf}],
-        condition=conditions.IfCondition(launch.substitutions.LaunchConfiguration("overwrite_robot_description"))),
+        parameters=[{'robot_description': urdf}],
+        condition=conditions.IfCondition(LaunchConfiguration('overwrite_robot_description'))),
     launch_ros.actions.Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
         name='joint_state_publisher',
         arguments=[urdf_path],
-        condition=conditions.IfCondition(launch.substitutions.LaunchConfiguration("overwrite_robot_description"))),
-    # If flag overwrite_robot_description is not set:
+        condition=conditions.IfCondition(LaunchConfiguration('overwrite_robot_description'))),
+    # ── Robot description (overwrite_robot_description=false) ──────────────
     launch_ros.actions.Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
-        name='robot_state_publisher',
-        parameters = [{'robot_description' : urdf}],
-        remappings=remappings,
-        condition=conditions.UnlessCondition(launch.substitutions.LaunchConfiguration("overwrite_robot_description"))),
+        name='robot_state_publisher_azure',
+        parameters=[{'robot_description': urdf}],
+        remappings=azure_description_remappings,
+        condition=conditions.UnlessCondition(LaunchConfiguration('overwrite_robot_description'))),
     launch_ros.actions.Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
-        name='joint_state_publisher',
+        name='joint_state_publisher_azure',
         arguments=[urdf_path],
-        remappings=remappings,
-        condition=conditions.UnlessCondition(launch.substitutions.LaunchConfiguration("overwrite_robot_description"))),
+        remappings=azure_description_remappings,
+        condition=conditions.UnlessCondition(LaunchConfiguration('overwrite_robot_description'))),
+    # ── rviz2 ──────────────────────────────────────────────────────────────
+    launch_ros.actions.Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        output='screen',
+        arguments=['-d', rviz_config],
+        condition=conditions.IfCondition(LaunchConfiguration('use_rviz'))),
+    # ── Legacy TF frame aliases ────────────────────────────────────────────
+    launch_ros.actions.Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='legacy_depth_frame_alias',
+        arguments=[
+            '--x', '0', '--y', '0', '--z', '0',
+            '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1',
+            '--frame-id', [LaunchConfiguration('tf_prefix'), 'depth_camera_link'],
+            '--child-frame-id', LaunchConfiguration('legacy_depth_frame'),
+        ],
+        condition=conditions.IfCondition(LaunchConfiguration('publish_legacy_frame_aliases'))),
+    launch_ros.actions.Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='legacy_rgb_frame_alias',
+        arguments=[
+            '--x', '0', '--y', '0', '--z', '0',
+            '--qx', '0', '--qy', '0', '--qz', '0', '--qw', '1',
+            '--frame-id', [LaunchConfiguration('tf_prefix'), 'rgb_camera_link'],
+            '--child-frame-id', LaunchConfiguration('legacy_rgb_frame'),
+        ],
+        condition=conditions.IfCondition(LaunchConfiguration('publish_legacy_frame_aliases'))),
     ])
